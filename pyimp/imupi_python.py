@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import rospy
-from std_msgs.msg import String
+from std_msgs.msg import Header
 from sensor_msgs.msg import Imu
 import pigpio
 import time
@@ -101,11 +101,15 @@ def read_gyro_data(pigpio_ptr, handle):
         data = pigpio_ptr.i2c_read_i2c_block_data(handle, MPU_9150_GYRO_XOUT_H, IMUPI_BLOCK_SIZE)[1]
 
 def read_data(pigpio_ptr, handle):
-	a = []
-	g = []
+	start=timer()
+	read_time = rospy.Time.now()
 	data = pigpio_ptr.i2c_read_i2c_block_data(handle, MPU_9150_ACCEL_XOUT_H, IMUPI_MES_SIZE)[1]
+	end=timer()
+	elapsed = end-start
+	td = rospy.Duration.from_sec(elapsed/2)
+	
         
-	return data
+	return data, read_time + td
 
 def decode_regs_encode_msg(data, header=None, calibration=False):
 
@@ -127,21 +131,20 @@ def decode_regs_encode_msg(data, header=None, calibration=False):
 		msg.angular_velocity.y = gy
 		msg.angular_velocity.z = gz
 
-		msg.header.stamp = rospy.Time.now()
-		msg.header.frame_id = 'mpu9150_frame'
-		msg.header.seq = mpu_seq
+		msg.header = header
 		return msg
 
 	else:
-		print('ax: {0},  ay: {1},  az: {2},	gx: {3},  gy: {4},  gz: {5}'.format(ax, ay, az, gx, gy, gz))
+		#print('ax: {0},  ay: {1},  az: {2},	gx: {3},  gy: {4},  gz: {5}'.format(ax, ay, az, gx, gy, gz))
 		return ax, ay, az, gx, gy, gz
 
 def calc_gyro_offset():
+	print("Calculating Gyro Offsets...")
 	_off1 = 0
 	_off2 = 0
 	_off3 = 0
 	for i in range(IMUPI_GOFF_NB_ITER):
-		data = read_data(pi, h)
+		data, _ = read_data(pi, h)
 		res=decode_regs_encode_msg(data, calibration=True)
 		_off1 += res[3]
 		_off2 += res[4]
@@ -150,6 +153,7 @@ def calc_gyro_offset():
 	GYRO_OFF_X = _off1/IMUPI_GOFF_NB_ITER
 	GYRO_OFF_Y = _off2/IMUPI_GOFF_NB_ITER
 	GYRO_OFF_Z = _off3/IMUPI_GOFF_NB_ITER
+	print("X: {0},		Y: {1},		Z: {2}".format(GYRO_OFF_X, GYRO_OFF_Y, GYRO_OFF_Z))
 
 
 pub = rospy.Publisher('/imu9150', Imu, queue_size=10)
@@ -160,20 +164,15 @@ pi = pigpio.pi()
 h = init_mpu9150(pi)
 calc_gyro_offset()
 
-
-
-i=0
-elapsed = 0.0
 while not rospy.is_shutdown():
-	start=timer()
-	data = read_data(pi, h)
-	end=timer()
-	elapsed = elapsed + (end-start)    
-	print("Single Read " + str(elapsed))
-	res=decode_regs_encode_msg(data)
+	data, corrected_stamp = read_data(pi, h)
+	mh = Header()
+	mh.stamp = corrected_stamp
+	mh.frame_id = 'mpu9150_frame'
+	mh.seq = mpu_seq
+	res=decode_regs_encode_msg(data, header=mh)
 	pub.publish(res)
 	mpu_seq += 1
-	elapsed = 0.0
 	rate.sleep()
 
 
