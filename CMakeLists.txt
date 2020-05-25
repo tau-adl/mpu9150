@@ -19,8 +19,6 @@ find_package(
   system
   )
 
-#find_package(i2c-dev REQUIRED COMPONENTS)
-
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR} )
 find_package(pigpio MODULE REQUIRED)
 
@@ -117,6 +115,10 @@ catkin_package(
   DEPENDS system_lib
 )
 
+catkin_install_python(PROGRAMS scripts/imupi_python.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
 ###########
 ## Build ##
 ###########
@@ -124,11 +126,11 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 # include_directories(include)
-include_directories(
-  include
-  ${catkin_INCLUDE_DIRS}
-  ${pigpio_INCLUDE_DIRS}
-)
+#include_directories(
+#  include
+#  ${catkin_INCLUDE_DIRS}
+#  ${pigpio_INCLUDE_DIRS}
+#)
 
 ## Declare a C++ library
 # add_library(
@@ -145,27 +147,25 @@ include_directories(
 #  )
 
 ## Declare a C++ executable
-add_executable(
-  mpu9150_node
-  src/imupi.c
-  )
+#add_executable(
+#  mpu9150_node
+#  src/imupi_python
+#  )
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
-add_dependencies(
-  mpu9150_node
-  pigpiod_if2
-  -li2c
-  )
+#add_dependencies(
+#  mpu9150_node
+#  pigpiod_if2
+#  )
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(
-  mpu9150_node
-  ${catkin_LIBRARIES}
-  ${Boost_LIBRARIES}
-  pigpiod_if2
-  -li2c
-  )
+#target_link_libraries(
+#  mpu9150_node
+#  ${catkin_LIBRARIES}
+#  ${Boost_LIBRARIES}
+#  pigpiod_if2
+#  )
 
 #############
 ## Install ##

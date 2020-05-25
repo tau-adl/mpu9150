@@ -71,7 +71,9 @@ M_G                        =     9.81
 GYRO_OFF_X = 0
 GYRO_OFF_Y = 0
 GYRO_OFF_Z = 0
+
 mpu_seq = 0
+trig_seq = 0
 
 def init_mpu9150(pigpio_ptr):
 
@@ -157,19 +159,31 @@ def calc_gyro_offset():
 
 
 pub = rospy.Publisher('/imu9150', Imu, queue_size=10)
+pub_trig = rospy.Publisher('/trigger', Header, queue_size = 10)
 rospy.init_node('mpu9150', anonymous=True)
 rate = rospy.Rate(200)
 
 pi = pigpio.pi()
+pi.set_mode(23, pigpio.OUTPUT)
+pi.write(23, 0)
+pi.set_pull_up_down(23, pigpio.PUD_DOWN)
 h = init_mpu9150(pi)
 calc_gyro_offset()
 
 while not rospy.is_shutdown():
 	data, corrected_stamp = read_data(pi, h)
+	
 	mh = Header()
 	mh.stamp = corrected_stamp
 	mh.frame_id = 'mpu9150_frame'
 	mh.seq = mpu_seq
+	if (mpu_seq % 10 == 0):
+		pi.gpio_trigger(23, 100, 1)
+		tmp = Header()
+		tmp = mh
+		tmp.seq = trig_seq
+		trig_seq += 1
+		pub_trig.publish(mh)
 	res=decode_regs_encode_msg(data, header=mh)
 	pub.publish(res)
 	mpu_seq += 1
