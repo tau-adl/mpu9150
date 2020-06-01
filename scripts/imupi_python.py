@@ -74,17 +74,20 @@ GYRO_OFF_Z = 0
 
 mpu_seq = 0
 trig_seq = 0
+init_time = False
+read_time = 0
+td = - rospy.Duration.from_sec(0.002)  # Accel latency is 2ms, gyro is 1.9ms
 
 def init_mpu9150(pigpio_ptr):
 
 	h = pigpio_ptr.i2c_open(1, MPU_9150_I2C_ADDRESS_2)
-	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_SMPRT_DIV, 0x00)  #1kHz sample rate
+	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_SMPRT_DIV, 0x04)  #200Hz sample rate
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_DEFINE, 0x01)  #No ext sync, no low pass filter
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_ACCEL_CONFIG, 0x00)  #Accel range
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_GYRO_CONFIG, 0x10)  #Gyro range
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_FIFO_EN, 0x00)  #Disable FIFO
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_INT_PIN_CFG, 0x02)  #Bypass mode enabled
-	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_INT_ENABLE, 0x00)  #Disable all interrupts:
+	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_INT_ENABLE, 0x01)  #Enable/Disable interrupts
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_USER_CTRL, 0x00)  #No FIFO and no I2C slaves
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_PWR_MGMT_1, 0x00)  #No power management, internal clock source
 
@@ -94,26 +97,31 @@ def init_mpu9150(pigpio_ptr):
         return h
 
 def read_accel_data(pigpio_ptr, handle):
-	a = []
         data = pigpio_ptr.i2c_read_i2c_block_data(handle, MPU_9150_ACCEL_XOUT_H, IMUPI_BLOCK_SIZE)[1]
 
 
 def read_gyro_data(pigpio_ptr, handle):
-	g = []
         data = pigpio_ptr.i2c_read_i2c_block_data(handle, MPU_9150_GYRO_XOUT_H, IMUPI_BLOCK_SIZE)[1]
 
 def read_data(pigpio_ptr, handle):
-	start=timer()
-	read_time = rospy.Time.now()
+	global init_time, read_time, td
+	#start=timer()
+	if not init_time:
+		read_time = rospy.Time.now() 
+		init_time = True
+	else:
+		read_time = read_time + rospy.Duration.from_sec(0.005)
 	data = pigpio_ptr.i2c_read_i2c_block_data(handle, MPU_9150_ACCEL_XOUT_H, IMUPI_MES_SIZE)[1]
-	end=timer()
-	elapsed = end-start
-	td = rospy.Duration.from_sec(elapsed/2)
+	#end=timer()
+	#elapsed = end-start
+	#td = rospy.Duration.from_sec(elapsed/2)
+	#td = rospy.Duration.from_sec(0.002)
 	
         
-	return data, read_time + td
+	return data, read_time #+ td
 
 def decode_regs_encode_msg(data, header=None, calibration=False):
+	global td
 
 	ax = np.int16(int(binascii.hexlify(data[0:2]), 16)) * IMUPI_A_GAIN * M_G
 	ay = np.int16(int(binascii.hexlify(data[2:4]), 16)) * IMUPI_A_GAIN * M_G
@@ -134,6 +142,7 @@ def decode_regs_encode_msg(data, header=None, calibration=False):
 		msg.angular_velocity.z = gz
 
 		msg.header = header
+		msg.header.stamp = msg.header.stamp + td
 		return msg
 
 	else:
@@ -158,27 +167,16 @@ def calc_gyro_offset():
 	print("X: {0},		Y: {1},		Z: {2}".format(GYRO_OFF_X, GYRO_OFF_Y, GYRO_OFF_Z))
 
 
-pub = rospy.Publisher('/imu9150', Imu, queue_size=10)
-pub_trig = rospy.Publisher('/trigger', Header, queue_size = 10)
-rospy.init_node('mpu9150', anonymous=True)
-rate = rospy.Rate(200)
+def cbf(gpio, level, tick):
+	global mpu_seq, trig_seq
 
-pi = pigpio.pi()
-pi.set_mode(23, pigpio.OUTPUT)
-pi.write(23, 0)
-pi.set_pull_up_down(23, pigpio.PUD_DOWN)
-h = init_mpu9150(pi)
-calc_gyro_offset()
-
-while not rospy.is_shutdown():
 	data, corrected_stamp = read_data(pi, h)
-	
 	mh = Header()
 	mh.stamp = corrected_stamp
 	mh.frame_id = 'mpu9150_frame'
 	mh.seq = mpu_seq
-	if (mpu_seq % 10 == 0):
-		pi.gpio_trigger(23, 100, 1)
+	if (trig_flag and mpu_seq % trig_div == 0):
+		pi.gpio_trigger(gpio_trig_num, 100, 1)
 		tmp = Header()
 		tmp = mh
 		tmp.seq = trig_seq
@@ -187,7 +185,65 @@ while not rospy.is_shutdown():
 	res=decode_regs_encode_msg(data, header=mh)
 	pub.publish(res)
 	mpu_seq += 1
-	rate.sleep()
+
+pub = rospy.Publisher('/imu9150', Imu, queue_size=10)
+pub_trig = rospy.Publisher('/trigger', Header, queue_size = 10)
+rospy.init_node('mpu9150', anonymous=True)
+
+full_param_name = rospy.search_param('host_sample_rate')
+if full_param_name == None:
+	full_param_name = 'host_sample_rate'
+read_rate = rospy.get_param(full_param_name, 100)
+rate = rospy.Rate(read_rate)
+
+full_param_name = rospy.search_param('trigger_enable')
+if full_param_name == None:
+	full_param_name = 'trigger_enable'
+trigger_enable = rospy.get_param(full_param_name, True)
+trig_flag = trigger_enable
+
+full_param_name = rospy.search_param('trigger_divider')
+if full_param_name == None:
+	full_param_name = 'trigger_divider'
+trigger_divider = rospy.get_param(full_param_name, 8)
+trig_div = trigger_divider
+
+full_param_name = rospy.search_param('gpio_num')
+if full_param_name == None:
+	full_param_name = 'gpio_num'
+gpio_num = rospy.get_param(full_param_name, 23)
+gpio_trig_num = gpio_num
+
+pi = pigpio.pi()
+
+if trig_flag:
+	pi.set_mode(gpio_trig_num, pigpio.OUTPUT)
+	pi.write(gpio_trig_num, 0)
+	pi.set_pull_up_down(gpio_trig_num, pigpio.PUD_DOWN)
+
+h = init_mpu9150(pi)
+#calc_gyro_offset()
+cb1 = pi.callback(24, pigpio.RISING_EDGE, cbf)
+while not rospy.is_shutdown():
+
+	#data, corrected_stamp = read_data(pi, h)
+	
+	#mh = Header()
+	#mh.stamp = corrected_stamp
+	#mh.frame_id = 'mpu9150_frame'
+	#mh.seq = mpu_seq
+	#if (trig_flag and mpu_seq % trig_div == 0):
+	#	pi.gpio_trigger(gpio_trig_num, 100, 1)
+	#	tmp = Header()
+	#	tmp = mh
+	#	tmp.seq = trig_seq
+	#	trig_seq += 1
+	#	pub_trig.publish(mh)
+	#res=decode_regs_encode_msg(data, header=mh)
+	#pub.publish(res)
+	#mpu_seq += 1
+	#rate.sleep()
+	pass
 
 
 
