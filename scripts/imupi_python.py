@@ -81,18 +81,19 @@ td = - rospy.Duration.from_sec(0.002)  # Accel latency is 2ms, gyro is 1.9ms
 def init_mpu9150(pigpio_ptr):
 
 	h = pigpio_ptr.i2c_open(1, MPU_9150_I2C_ADDRESS_2)
+	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_PWR_MGMT_1, 0x01) #Put device in sleep mode
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_SMPRT_DIV, 0x04)  #200Hz sample rate
-	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_DEFINE, 0x01)  #No ext sync, no low pass filter
+	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_DEFINE, 0x01)  #No ext sync, minimal latency low pass filter
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_ACCEL_CONFIG, 0x00)  #Accel range
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_GYRO_CONFIG, 0x10)  #Gyro range
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_FIFO_EN, 0x00)  #Disable FIFO
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_INT_PIN_CFG, 0x02)  #Bypass mode enabled
-	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_INT_ENABLE, 0x01)  #Enable/Disable interrupts
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_USER_CTRL, 0x00)  #No FIFO and no I2C slaves
+	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_INT_ENABLE, 0x01)  #Enable interrupts
 	pigpio_ptr.i2c_write_byte_data(h, MPU_9150_PWR_MGMT_1, 0x00)  #No power management, internal clock source
 
 	#sleep for a second to let device initialize
-	time.sleep(1)
+	time.sleep(2)
 
         return h
 
@@ -112,6 +113,10 @@ def read_data(pigpio_ptr, handle):
 	else:
 		read_time = read_time + rospy.Duration.from_sec(0.005)
 	data = pigpio_ptr.i2c_read_i2c_block_data(handle, MPU_9150_ACCEL_XOUT_H, IMUPI_MES_SIZE)[1]
+        while(data == ''):
+		print("EMPTY")
+		data = pigpio_ptr.i2c_read_i2c_block_data(handle, MPU_9150_ACCEL_XOUT_H, IMUPI_MES_SIZE)[1]
+		
 	#end=timer()
 	#elapsed = end-start
 	#td = rospy.Duration.from_sec(elapsed/2)
@@ -171,6 +176,7 @@ def cbf(gpio, level, tick):
 	global mpu_seq, trig_seq
 
 	data, corrected_stamp = read_data(pi, h)
+	#print(data)
 	mh = Header()
 	mh.stamp = corrected_stamp
 	mh.frame_id = 'mpu9150_frame'
@@ -205,7 +211,7 @@ trig_flag = trigger_enable
 full_param_name = rospy.search_param('trigger_divider')
 if full_param_name == None:
 	full_param_name = 'trigger_divider'
-trigger_divider = rospy.get_param(full_param_name, 8)
+trigger_divider = rospy.get_param(full_param_name, 10)
 trig_div = trigger_divider
 
 full_param_name = rospy.search_param('gpio_num')
@@ -223,6 +229,7 @@ if trig_flag:
 
 h = init_mpu9150(pi)
 #calc_gyro_offset()
+time.sleep(5)
 cb1 = pi.callback(24, pigpio.RISING_EDGE, cbf)
 while not rospy.is_shutdown():
 
@@ -246,6 +253,7 @@ while not rospy.is_shutdown():
 	pass
 
 
+pi.i2c_write_byte_data(h, MPU_9150_INT_ENABLE, 0x00)  #Disable interrupts
 
 
 
