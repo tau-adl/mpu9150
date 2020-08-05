@@ -186,13 +186,13 @@ def cbf(gpio, level, tick):
 	#print("imu stamp {0}: {1}".format(res.header.seq, res.header.stamp))
 	#print("cbk time: {0}".format(rospy.Time.now()))
 	pub.publish(res)
-	if (trig_flag and mpu_seq != 0 and mpu_seq % trig_div == 4):
+	if (trig_flag and mpu_seq != 0 and mpu_seq % trig_div == 1):
 		#pi.gpio_trigger(gpio_trig_num, 100, 1)
 		tmp = Header()
-		tmp.stamp = corrected_stamp + trig_td
+		tmp.stamp = corrected_stamp + 4 * trig_td
 		tmp.seq = trig_seq
 		tmp.frame_id = 'mpu9150_frame'
-		print("stamp {0}: {1}s  :  {2}ns".format(trig_seq + 1, tmp.stamp.secs, tmp.stamp.nsecs))
+		#print("stamp {0}: {1}s  :  {2}ns".format(trig_seq + 1, tmp.stamp.secs, tmp.stamp.nsecs))
 		pub_trig.publish(tmp)
 		trig_seq += 1
 	
